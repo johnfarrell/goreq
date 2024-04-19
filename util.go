@@ -7,11 +7,16 @@ import (
 	"strings"
 )
 
-func RequestParse[T any](next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+const (
+	tagName = "goreq"
 
-	})
-}
+	inKey       = "in"
+	inValHeader = "header"
+	inValQuery  = "query"
+
+	labelKey = "label"
+	typeKey  = "type"
+)
 
 type structTags struct {
 	In    string
@@ -36,19 +41,25 @@ func parseTags(val string) structTags {
 		}
 
 		switch parts[0] {
-		case "in":
+		case inKey:
 			tags.In = parts[1]
-		case "label":
+		case labelKey:
 			tags.Label = parts[1]
-		case "type":
+		case typeKey:
 			tags.Type = parts[1]
 		}
+	}
+
+	// Default to query parameter search if no valid inKey was
+	// specified
+	if tags.In == "" {
+		tags.In = inValQuery
 	}
 
 	return tags
 }
 
-func parseParameters[T any](r *http.Request) (T, error) {
+func parseParameters[T any](r *http.Request) (*T, error) {
 	var ret T
 
 	// Used for finding struct tag definitions
@@ -57,7 +68,7 @@ func parseParameters[T any](r *http.Request) (T, error) {
 	// Make sure we only try to parse into a struct-type. We are
 	// unable to enforce this via the generic type so need to do it here.
 	if ty.Kind() != reflect.Struct {
-		return ret, fmt.Errorf("expected a struct, got a %s", ty)
+		return nil, fmt.Errorf("expected a struct, got a %s", ty)
 	}
 
 	// Used for assigning return values
@@ -66,17 +77,34 @@ func parseParameters[T any](r *http.Request) (T, error) {
 	for i := 0; i < ty.NumField(); i++ {
 		field := ty.Field(i)
 
-		tag := parseTags(field.Tag.Get("goreq"))
+		tagVal := field.Tag.Get(tagName)
 
-		switch tag.In {
-		case "header":
-			headerVal := r.Header.Get(tag.Label)
-			va.Elem().FieldByName(field.Name).SetString(headerVal)
-		case "query":
-			queryVal := r.URL.Query().Get(tag.Label)
-			va.Elem().FieldByName(field.Name).SetString(queryVal)
+		// Don't process any skipped tags
+		if tagVal == "-" {
+			continue
 		}
+		tag := parseTags(tagVal)
+
+		key := tag.Label
+		if key == "" {
+			key = field.Name
+		}
+
+		val := ""
+		switch tag.In {
+		case inValHeader:
+			val = r.Header.Get(key)
+		case inValQuery:
+			val = r.URL.Query().Get(strings.ToLower(key))
+		}
+
+		// If the value was not found, return an error
+		if val == "" {
+			return nil, fmt.Errorf("field %s has no value for %s", field.Name, key)
+		}
+
+		va.Elem().FieldByName(field.Name).SetString(val)
 	}
 
-	return ret, nil
+	return &ret, nil
 }
