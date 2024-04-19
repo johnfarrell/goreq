@@ -100,7 +100,7 @@ func parseParameters[T any](r *http.Request) (*T, error) {
 
 		// If the value was not found, return an error
 		if val == "" {
-			return nil, fmt.Errorf("field %s has no value for %s", field.Name, key)
+			return nil, fmt.Errorf("'%v' parameter not found", key)
 		}
 
 		va.Elem().FieldByName(field.Name).SetString(val)
